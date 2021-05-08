@@ -1,0 +1,178 @@
+\documentclass[dvipdfmx,uplatex]{jsarticle}
+
+\title{Cascading Shadow Mapping における最適な分割が対数分割なのはなぜか？}
+
+\usepackage{tikz}
+\usetikzlibrary{intersections, calc, arrows.meta, angles, quotes}
+\usepackage{tkz-euclide}
+\usepackage{bm}
+\usepackage{amsmath,amssymb}
+
+\newcommand{\axis}[1]{\mathrm{#1}}
+\newcommand{\V}[1]{\bm{#1}}
+\newcommand{\Therefore}{\therefore \hspace{2mm}}
+
+\begin{document}
+
+\maketitle
+
+Cascading Shadow Mapping では対数分割がある意味において最適であるということが知られている。
+この記事はその理由を説明する。
+
+まず、シャドウマップのピクセル密度を場所ごとに任意に変更できるという(現実にはありえない)仮定を置く。
+つまり、シャドウマップのある領域には高密度でピクセルを詰め込み、またある領域には少数のピクセルしか割り振らないということができると仮定する。
+このとき、ピクセルの密度をどのように設定するのが最適なのかを考えよう。
+
+シャドウマップのピクセル密度が過剰に疎であると、影にエイリアシングが発生してしまう。
+一方、ピクセル密度が過剰に密であると、エイリアシングは発生しないがリソースの無駄使いだ。
+よって、エイリアシングが発生しないギリギリの密度を狙うのがよさそうだ。
+エイリアシングはシャドウマップのひとつのピクセルが、スクリーン上の複数のピクセルにマップされたときに発生する。
+よって、シャドウマップのひとつピクセルが、スクリーン上のちょうどひとつのピクセルにマップされるような密度が最適だと考えられる。
+そのような密度を具体的に求めよう。
+
+簡単のため、3次元空間をカメラ方向とライト方向を含むような平面で切った2次元空間で考える。
+この世界ではシャドウマップは2次元ではなく1次元になるので扱いやすい。
+
+\begin{figure}[tb]
+\begin{tikzpicture}[scale=1]
+
+  % 視錐台を描く
+  \coordinate (O) at (0, 7.5);
+  \coordinate (CameraAxisZ) at (12, 7.5);
+  \coordinate (FrustumFarT) at (10, 12.5);
+  \coordinate (FrustumFarB) at (10, 2.5);
+  \draw[->] (O)--(CameraAxisZ);
+  \draw [name path=FrustumT] (O)--(FrustumFarT);
+  \draw [name path=FrustumB] (O)--(FrustumFarB);
+  \draw (O) node[left] {O};
+  \draw (CameraAxisZ) node[right] {$ \axis{z} $};
+
+  % サーフィスを描く
+  \coordinate (SurfaceL) at (6, 7.5);
+  \coordinate (SurfaceR) at (8.5, 9.5);
+  \draw (SurfaceL) node[below] {$ z $};
+  \draw [very thick] (SurfaceL)--(SurfaceR) node[midway,auto=right,sloped]{$ \Delta A $};
+  \coordinate (SurfaceZProjR) at ($ (O)!(SurfaceR)!(CameraAxisZ) $);
+  \draw (SurfaceZProjR) node[below] {$ z + \Delta z $};
+  \draw [dashed] (SurfaceZProjR)--(SurfaceR);
+
+  % シャドウマップの軸を描く
+  \coordinate (ShadowMapAxisL) at (0, 11);
+  \coordinate (ShadowMapAxisR) at (9, 14);
+  \draw[->] (ShadowMapAxisL)--(ShadowMapAxisR);
+  \draw (ShadowMapAxisR) node[right] {$ \axis{u} $};
+
+  % シャドウマップ上のピクセルを描く
+  \coordinate (ShadowMapPixelL) at ($ (ShadowMapAxisL)!(SurfaceL)!(ShadowMapAxisR) $);
+  \coordinate (ShadowMapPixelR) at ($ (ShadowMapAxisL)!(SurfaceR)!(ShadowMapAxisR) $);
+  \draw [dashed] (SurfaceL)--(ShadowMapPixelL);
+  \draw [dashed] (SurfaceR)--(ShadowMapPixelR);
+  \draw [very thick] (ShadowMapPixelL) node[above]{$ S(z) $} -- node[midway,above,sloped]{$ \Delta S $} node[at end,above]{$ S(z + \Delta z) $} (ShadowMapPixelR);
+
+  % NearPlane を描く
+  \coordinate (NearPlaneP) at (3, 7.5);
+  \draw (NearPlaneP) node[below] {$ z_n $};
+  \path [name path=NearPlane0] (3, 10)--(3, 5);
+  \path [name intersections={of=NearPlane0 and FrustumT}];
+  \coordinate (NearPlaneT) at (intersection-1);
+  \path [name intersections={of=NearPlane0 and FrustumB}];
+  \coordinate (NearPlaneB) at (intersection-1);
+  \draw [name path=NearPlane, dashed] (NearPlaneT)--(NearPlaneB);
+
+  % カメラ上のピクセルを描く
+  \draw [dashed, name path=RayT] (O)--(SurfaceR);
+  \path [name intersections={of=RayT and NearPlane}];
+  \coordinate (PixelT) at (intersection-1);
+  \draw [very thick] (NearPlaneP)--(PixelT) node[midway,auto=left]{$ \Delta P $};
+
+\end{tikzpicture}
+\end{figure}
+
+シャドウマップのピクセルの密度は深度によって決まると仮定し、その累積ピクセル密度関数を $S(z)$ と置く。
+要するに、$S(z)$の2点間の差 $S(z_2) - S(z_1)$ が $z_1$ と $z_2$ の間にあるピクセルの数となるように $S(z)$ を決めたということだ。
+ただし、「ピクセルの数を返す」と言っても、$z$ が中途半端な位置(ピクセルの境界以外の位置)にあるときは、整数ではなく 3.5 や 1.2 のような中途半端な数を返すということにする。
+
+シャドウマップ上のピクセルがスクリーン上のいくつのピクセルにマップされるのかを計算したい。
+そこで、シャドウマップ上のある領域 $\Delta S$ に注目する。
+$\Delta S$ の影を受けるサーフィス上の領域を $\Delta A$ とし、$\Delta A$ の深度の最小値を $z$、最大値を $z + \Delta z$ とする。
+さらに、$\Delta A$ が投影されるスクリーン上の領域を $\Delta P$ とし、near plane の深度を $z_n$ とする。
+
+\begin{figure}[tb]
+\begin{tikzpicture}[scale=1.75]
+
+  % 視錐台を描く
+  \coordinate (O) at (4, 7.5);
+  \coordinate (CameraAxisZ) at (10, 7.5);
+  \draw[->] (O)--(CameraAxisZ);
+  \draw (O) node[left] {O};
+  \draw (CameraAxisZ) node[right] {$ \axis{z} $};
+
+  % サーフィスを描く
+  \coordinate (SurfaceL) at (6, 7.5);
+  \coordinate (SurfaceR) at (8.5, 9.5);
+  \draw [very thick] (SurfaceL)--(SurfaceR) node[midway,auto=left,sloped]{$ \Delta A $};
+  \coordinate (SurfaceZProjR) at ($ (O)!(SurfaceR)!(CameraAxisZ) $);
+  \draw [dashed] (SurfaceZProjR)--(SurfaceR);
+  \draw [gray] (SurfaceZProjR) .. controls +(30:4mm) and +(-30:4mm) .. (SurfaceR) node[black,midway,fill=white]{$ \Delta y $};
+  \draw [gray] (SurfaceL) .. controls +(-45:4mm) and +(-135:4mm) .. (SurfaceZProjR) node[black,midway,fill=white]{$ \Delta z $};
+
+  % 補助線
+  \coordinate (H) at ($ (SurfaceL)!0.75!90:(SurfaceR) $);
+  \draw [dashed] (SurfaceL)--(H);
+  \tkzMarkRightAngle[size=0.15](SurfaceR,SurfaceL,H);
+
+  \draw pic ["$\theta$",draw,angle radius=5mm,angle eccentricity=1.75]{angle = H--SurfaceL--O};
+  \draw pic ["$90^\circ-\theta$",draw,angle radius=5mm,angle eccentricity=2.5]{angle = CameraAxisZ--SurfaceL--SurfaceR};
+  \draw pic ["$\theta$",draw,angle radius=5mm,angle eccentricity=1.75]{angle = SurfaceL--SurfaceR--SurfaceZProjR};
+
+\end{tikzpicture}
+\end{figure}
+
+視線方向とサーフィスの法線のなす角を $\theta$ と置くと、図より
+\begin{align*}
+  \cos \theta &= \frac{\Delta y}{\Delta A}, \hspace{1cm} \sin \theta = \frac{\Delta z}{\Delta A}
+\end{align*}
+\begin{align*}
+  \Therefore \Delta y &= \frac{\cos \theta}{\sin \theta} \Delta z
+\end{align*}
+となる。また、相似の関係より
+\begin{align*}
+  \frac{\Delta P}{z_n} &= \frac{\Delta y}{z + \Delta z} \\
+  \Therefore \Delta P &= \frac{z_n}{z + \Delta z} \Delta y \\
+  \Therefore \Delta P &= \frac{z_n}{z + \Delta z} \frac{\cos \theta}{\sin \theta} \Delta z
+\end{align*}
+となる。ここで「シャドウマップのひとつピクセルが、スクリーン上のちょうどひとつのピクセルにマップされるような密度」を求めるために以下の条件を課す。
+\begin{align*}
+  \Delta P = \Delta S
+\end{align*}
+これを上の式に代入して
+\begin{align*}
+  \Delta S &= \frac{z_n}{z + \Delta z} \frac{\cos \theta}{\sin \theta} \Delta z \\
+  \Therefore \frac{\Delta S}{\Delta z} &= z_n \frac{\cos \theta}{\sin \theta} \frac{1}{z + \Delta z} \\
+  \Therefore \frac{\Delta S}{\Delta z} &= k \frac{1}{z + \Delta z}
+\end{align*}
+を得る。
+ただし、$k = z_n \cos \theta / \sin \theta$ と置いた。
+$k$ はカメラの設定とサーフィスの向きのみによって決まってしまうので、シャドウマップのピクセル密度には依存しない。
+
+ここで、$\Delta P / \Delta S$ を一定に保ちながら $\Delta z \rightarrow 0$ の極限をとると、
+\begin{align*}
+  \frac{dS}{dz} &= k \frac{1}{z}
+\end{align*}
+となる。両辺を $z$ で積分すると
+\begin{align*}
+  S(z) &= k \int \frac{dz}{z} \\
+       &= k (\log z + C)
+\end{align*}
+が得られる。ただし $C$ は積分定数である。$S(z)$は累積ピクセル密度関数であるので、$S(z_n)=0$でないといけない。この条件を使って$C$の値を決めよう。
+\begin{align*}
+  k (\log z_n + C) = 0 \\
+  \Therefore C = -\log z_n
+\end{align*}
+
+以上より、最適な $S(z)$ は以下のような形であるとわかった。
+\begin{align*}
+  S(z) = k \log \frac{z}{z_n}
+\end{align*}
+
+\end{document}
